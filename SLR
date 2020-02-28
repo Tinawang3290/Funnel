@@ -1,0 +1,61 @@
+-- The table has about 100K distinct rows.
+
+WITH apps AS (
+SELECT
+  stage_start_date_pst,
+  fe1.stage,
+  app_starts,
+  application_uuid_value,
+  fe1.stage_num,
+  age,
+  CAST(fico_score AS INT64) AS fico_score,
+  soft_fico_score,
+  state_code,
+  CAST(application_amount AS FLOAT64) AS application_amount,
+  identity_uuid_value,
+  app_start_date,
+  is_direct_mail,
+  dm_campaign_source,
+  stage_entry_ts
+FROM
+  (SELECT DISTINCT stage_num, stage FROM `reporting.f_slr_figure_funnel_event`) fe1
+LEFT JOIN (
+-- 
+SELECT
+             app.stage,
+             app.stage_num,
+             aps.app_starts,
+             f.application_uuid_value,
+             app.identity_uuid_value,
+             DATE_TRUNC(DATE(stage_entry_ts, 'America/Los_Angeles'),DAY) stage_start_date_pst,
+             DATE_DIFF(CAST(app_start_date AS DATE),CAST(dob AS DATE),year) AS age,
+             app.hard_fico_score AS fico_score,
+             app.soft_fico_score,
+             app.state AS state_code,
+             app.loan_amount AS application_amount,
+             stage_entry_ts,
+             app.app_start_date,
+             'Need to update ' AS is_direct_mail,
+             'Need to update' AS dm_campaign_source
+           FROM
+             `reporting.f_slr_figure_funnel_event` f
+           JOIN
+              `reporting.lkup_slr_application` app ON (app.stage = f.stage AND f.application_uuid_value = app.application_uuid_value)
+           JOIN
+             (SELECT application_uuid_value, 1 app_starts FROM `reporting.f_slr_figure_funnel_event` WHERE stage = 'App Start') aps ON (app.application_uuid_value = aps.application_uuid_value)
+           
+          ) i ON i.stage = fe1.stage
+)
+SELECT
+  a.*,
+  l.organization,
+  CASE
+    WHEN a.stage = 'Product Select' AND a.application_uuid_value IN (SELECT application_uuid_value FROM reporting.f_slr_figure_funnel_event WHERE stage = 'Declined' AND previous_stage IN ('Product Select','App Start', 'Initial') ) THEN 'Hide'
+    WHEN a.stage = 'Tradelines Select' AND a.application_uuid_value IN (SELECT application_uuid_value FROM reporting.f_slr_figure_funnel_event WHERE stage = 'Declined' AND previous_stage IN ('Product Select','App Start', 'Initial','Tradelines Select') ) THEN 'Hide'
+    ELSE 'Show'
+  END AS decline_filter
+FROM
+  apps a
+JOIN
+  reporting.lkup_slr_application l ON a.application_uuid_value = l.application_uuid_value
+  
